@@ -9,6 +9,7 @@ const productSchema = new mongoose.Schema(
     purchaseBy: { type: String },
     createdBy: { type: String },
     updatedBy: { type: String },
+    unitPrice: { type: Number, required: true },
     createdDate: {
       type: Date,
       required: true,
