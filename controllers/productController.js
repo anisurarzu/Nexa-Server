@@ -195,3 +195,39 @@ exports.uploadProductImage = async (req, res) => {
     });
   }
 };
+
+// Get Products by Category ID with populated category details
+exports.getProductsByCategory = async (req, res) => {
+  try {
+    const { categoryCode } = req.params;
+    console.log("Fetching products for category code:", categoryCode);
+
+    if (!categoryCode) {
+      return res.status(400).json({
+        success: false,
+        message: "Category Code is required",
+      });
+    }
+
+    // Since category is stored as String in your model, query directly as string
+    const products = await Product.find({ category: categoryCode }).sort({
+      createdAt: -1,
+    });
+
+    console.log(
+      `Found ${products.length} products for category: ${categoryCode}`
+    );
+
+    res.status(200).json({
+      success: true,
+      products,
+      count: products.length,
+    });
+  } catch (error) {
+    console.error("Error in getProductsByCategory:", error);
+    res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};

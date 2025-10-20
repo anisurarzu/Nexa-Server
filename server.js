@@ -10,6 +10,7 @@ const orderRoutes = require("./routes/orderRoutes");
 const productRoutes = require("./routes/productRoutes");
 const expenseRoutes = require("./routes/expenseRoutes");
 const categoryRoutes = require("./routes/categoryRoutes");
+const productOrderRoutes = require("./routes/productOrderRoutes"); // Import the new product order routes
 require("dotenv").config();
 
 const app = express();
@@ -22,7 +23,6 @@ app.use(express.json());
 app.use(cors());
 
 // Auth Routes
-
 app.use("/api/auth", authRoutes);
 
 // Slider Routes
@@ -34,19 +34,24 @@ app.use("/api", roomRoutes); // Add slider routes under /api
 // Portfolio Routes
 app.use("/api", hotelRoutes); // Add slider routes under /api
 
-//Booking Routes
+// Booking Routes
 app.use("/api", bookingRoutes);
 
-//Order Routes
+// Order Routes
 app.use("/api", orderRoutes);
 
-//Product Routes
+// Product Routes
 app.use("/api", productRoutes);
 
-//Expense Routes
+// Expense Routes
 app.use("/api", expenseRoutes);
 
+// Category Routes
 app.use("/api", categoryRoutes);
+
+// Product Order Routes - Add the new routes
+app.use("/api/productOrders", productOrderRoutes); // This will handle all product order related endpoints
+
 // Root Route
 app.get("/", (req, res) => {
   res.send("API is running...");

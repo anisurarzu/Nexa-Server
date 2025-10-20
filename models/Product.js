@@ -1,12 +1,13 @@
-const mongoose = require("mongoose");
+const mongoose = require("mongoose"); // Add this line
 
 const productSchema = new mongoose.Schema(
   {
-    productId: { type: String, unique: true }, // Unique ID generated from backend
+    productId: { type: String, unique: true },
     productName: { type: String, required: true },
     category: { type: String, required: true },
     description: { type: String },
     purchaseBy: { type: String },
+    purchaseDate: { type: Date },
     createdBy: { type: String },
     updatedBy: { type: String },
     unitPrice: { type: Number, required: true },

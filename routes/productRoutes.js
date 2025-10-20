@@ -10,6 +10,12 @@ router.post("/products", productController.createProduct);
 router.get("/products", productController.getProducts);
 router.get("/productsDropdown", productController.getProductDropdown);
 
+// Get products by category ID
+router.get(
+  "/products/category/:categoryCode",
+  productController.getProductsByCategory
+);
+
 // Get a specific product by ID
 router.get("/products/:id", productController.getProductById);
 
@@ -19,6 +25,7 @@ router.post(
   upload.single("image"),
   productController.uploadProductImage
 );
+
 // Update a product by ID
 router.put("/products/:id", productController.updateProduct);
 
