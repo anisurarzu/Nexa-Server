@@ -1,4 +1,6 @@
+const mongoose = require("mongoose");
 const ProductOrder = require("../models/ProductOrder");
+const Product = require("../models/Product");
 
 /**
  * Generate auto order number in format YYMMNNN
@@ -6,16 +8,17 @@ const ProductOrder = require("../models/ProductOrder");
 const generateOrderNumber = async () => {
   try {
     const now = new Date();
-    const year = now.getFullYear().toString().slice(-2); // last 2 digits of year
-    const month = (now.getMonth() + 1).toString().padStart(2, "0"); // 01–12
+    const year = now.getFullYear().toString().slice(-2);
+    const month = (now.getMonth() + 1).toString().padStart(2, "0");
 
-    // Get latest order for this month
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
 
     const latestOrder = await ProductOrder.findOne({
       createdAt: { $gte: startOfMonth, $lte: endOfMonth },
-    }).sort({ createdAt: -1 });
+    })
+      .sort({ createdAt: -1 })
+      .select("orderNo");
 
     let sequence = 1;
     if (latestOrder?.orderNo) {
@@ -27,7 +30,6 @@ const generateOrderNumber = async () => {
     return `${year}${month}${sequenceStr}`;
   } catch (error) {
     console.error("Error generating order number:", error);
-    // Fallback unique order number
     return `${new Date().getFullYear().toString().slice(-2)}${(
       new Date().getMonth() + 1
     )
@@ -37,7 +39,51 @@ const generateOrderNumber = async () => {
 };
 
 /**
- * ✅ Create new order (Single Product)
+ * Update product quantity (deduct or restore)
+ */
+const updateProductQuantity = async (
+  productId,
+  orderQty,
+  operation = "deduct"
+) => {
+  try {
+    // Ensure orderQty is a number
+    const qtyToChange = parseInt(orderQty, 10);
+    if (isNaN(qtyToChange) || qtyToChange <= 0) {
+      throw new Error(`অবৈধ অর্ডার পরিমাণ: ${orderQty}`);
+    }
+
+    const product = await Product.findOne({ productId });
+    if (!product) throw new Error(`পণ্য পাওয়া যায়নি: ${productId}`);
+
+    // Convert current quantities to numbers
+    let currentQty = parseInt(product.qty, 10) || 0;
+
+    if (operation === "deduct") {
+      if (currentQty < qtyToChange) {
+        throw new Error(
+          `স্টক পর্যাপ্ত নয়। পাওয়া যায়: ${currentQty}, চাওয়া হয়েছে: ${qtyToChange}`
+        );
+      }
+      currentQty -= qtyToChange;
+    } else if (operation === "restore") {
+      currentQty += qtyToChange;
+    }
+
+    // Update both qty and stockQTY
+    product.qty = currentQty;
+    product.stockQTY = currentQty;
+
+    await product.save();
+    return product;
+  } catch (error) {
+    console.error("Error updating product quantity:", error);
+    throw error;
+  }
+};
+
+/**
+ * Create new order
  */
 const createOrder = async (req, res) => {
   try {
@@ -59,7 +105,6 @@ const createOrder = async (req, res) => {
       status,
     } = req.body;
 
-    // Validate required fields
     if (!productId || !productName || !salePrice || !quantity) {
       return res.status(400).json({
         success: false,
@@ -68,11 +113,27 @@ const createOrder = async (req, res) => {
       });
     }
 
-    const orderNo = await generateOrderNumber();
+    if (quantity <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: "অর্ডার পরিমাণ ০ বা তার চেয়ে কম হতে পারে না!",
+      });
+    }
 
+    // Deduct stock
+    let updatedProduct;
+    try {
+      updatedProduct = await updateProductQuantity(
+        productId,
+        quantity,
+        "deduct"
+      );
+    } catch (error) {
+      return res.status(400).json({ success: false, message: error.message });
+    }
+
+    const orderNo = await generateOrderNumber();
     const calculatedTotal = (salePrice || 0) * (quantity || 0);
-    const finalTotal = grandTotal || calculatedTotal;
-    const finalAmount = totalAmount || calculatedTotal;
 
     const orderData = {
       orderNo,
@@ -83,46 +144,34 @@ const createOrder = async (req, res) => {
       salePrice,
       quantity,
       total: total || calculatedTotal,
-
       customerName: customerName || "Walk-in Customer",
       customerPhone: customerPhone || "N/A",
       customerAddress: customerAddress || "N/A",
-
-      totalAmount: finalAmount,
-      grandTotal: finalTotal,
+      totalAmount: totalAmount || calculatedTotal,
+      grandTotal: grandTotal || calculatedTotal,
       paymentMethod: paymentMethod || "Cash",
       createdBy: createdBy || "user",
       status: status || "Pending",
+      originalStock: updatedProduct.qty + quantity,
+      remainingStock: updatedProduct.qty,
     };
 
     const newOrder = new ProductOrder(orderData);
     const savedOrder = await newOrder.save();
 
-    return res.status(201).json({
+    res.status(201).json({
       success: true,
-      message: "অর্ডার সফলভাবে তৈরি হয়েছে!",
+      message: "অর্ডার সফলভাবে তৈরি হয়েছে এবং পণ্যের স্টক আপডেট করা হয়েছে!",
       data: savedOrder,
+      productStock: {
+        before: orderData.originalStock,
+        after: orderData.remainingStock,
+        deducted: quantity,
+      },
     });
   } catch (error) {
     console.error("Error creating order:", error);
-
-    if (error.code === 11000 && error.keyPattern?.orderNo) {
-      return res.status(400).json({
-        success: false,
-        message: "অর্ডার নম্বর ডুপ্লিকেট হয়েছে, আবার চেষ্টা করুন!",
-      });
-    }
-
-    if (error.name === "ValidationError") {
-      const errors = Object.values(error.errors).map((e) => e.message);
-      return res.status(400).json({
-        success: false,
-        message: "ডেটা ভ্যালিডেশন ব্যর্থ হয়েছে!",
-        errors,
-      });
-    }
-
-    return res.status(500).json({
+    res.status(500).json({
       success: false,
       message: "অর্ডার তৈরি করতে সমস্যা হয়েছে!",
       error: error.message,
@@ -131,30 +180,120 @@ const createOrder = async (req, res) => {
 };
 
 /**
- * ✅ Get all orders (with filter, pagination, and search)
+ * Update order
+ */
+const updateOrder = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { quantity: newQty, status: newStatus, ...updates } = req.body;
+
+    const order = await ProductOrder.findById(id);
+    if (!order) {
+      return res
+        .status(404)
+        .json({ success: false, message: "অর্ডার পাওয়া যায়নি!" });
+    }
+
+    let stockChange = null;
+
+    // Handle quantity change
+    if (newQty !== undefined && newQty !== order.quantity) {
+      const diff = newQty - order.quantity;
+
+      if (diff > 0) {
+        // Need more items - deduct additional stock
+        await updateProductQuantity(order.productId, diff, "deduct");
+        stockChange = `Deducted ${diff} extra units`;
+      } else if (diff < 0) {
+        // Need fewer items - restore stock
+        await updateProductQuantity(order.productId, Math.abs(diff), "restore");
+        stockChange = `Restored ${Math.abs(diff)} units`;
+      }
+
+      order.quantity = newQty;
+      order.total = order.salePrice * newQty;
+      order.totalAmount = order.total;
+      order.grandTotal = order.total;
+    }
+
+    // Handle status change
+    if (newStatus && newStatus !== order.status) {
+      if (newStatus === "Cancelled" && order.status !== "Cancelled") {
+        // Order is being cancelled - restore stock
+        await updateProductQuantity(order.productId, order.quantity, "restore");
+        stockChange = `Restored ${order.quantity} units due to cancellation`;
+      } else if (order.status === "Cancelled" && newStatus !== "Cancelled") {
+        // Order is being reactivated - deduct stock again
+        await updateProductQuantity(order.productId, order.quantity, "deduct");
+        stockChange = `Deducted ${order.quantity} units (reactivated order)`;
+      }
+      order.status = newStatus;
+    }
+
+    // Update other fields
+    Object.assign(order, updates);
+    const updatedOrder = await order.save();
+
+    res.json({
+      success: true,
+      message: "অর্ডার সফলভাবে আপডেট হয়েছে!",
+      data: updatedOrder,
+      stockChange,
+    });
+  } catch (error) {
+    console.error("Error updating order:", error);
+    res.status(500).json({
+      success: false,
+      message: "অর্ডার আপডেট করতে সমস্যা হয়েছে!",
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * Delete order
+ */
+const deleteOrder = async (req, res) => {
+  try {
+    const order = await ProductOrder.findById(req.params.id);
+    if (!order) {
+      return res
+        .status(404)
+        .json({ success: false, message: "অর্ডার পাওয়া যায়নি!" });
+    }
+
+    // Restore stock only if order wasn't cancelled
+    if (order.status !== "Cancelled") {
+      await updateProductQuantity(order.productId, order.quantity, "restore");
+    }
+
+    await ProductOrder.findByIdAndDelete(req.params.id);
+
+    res.json({
+      success: true,
+      message:
+        "অর্ডার সফলভাবে ডিলিট হয়েছে এবং পণ্যের স্টক পুনরুদ্ধার করা হয়েছে!",
+      restored: order.status !== "Cancelled" ? order.quantity : 0,
+    });
+  } catch (error) {
+    console.error("Error deleting order:", error);
+    res.status(500).json({
+      success: false,
+      message: "অর্ডার ডিলিট করতে সমস্যা হয়েছে!",
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * Get all orders (with pagination & search)
  */
 const getAllOrders = async (req, res) => {
   try {
-    const {
-      page = 1,
-      limit = 10,
-      status,
-      startDate,
-      endDate,
-      search,
-    } = req.query;
-
+    const { page = 1, limit = 10, status, search } = req.query;
     const query = {};
 
     if (status && status !== "all") query.status = status;
-
-    if (startDate && endDate) {
-      query.createdAt = {
-        $gte: new Date(startDate),
-        $lte: new Date(endDate),
-      };
-    }
-
     if (search) {
       query.$or = [
         { customerName: { $regex: search, $options: "i" } },
@@ -165,8 +304,8 @@ const getAllOrders = async (req, res) => {
 
     const orders = await ProductOrder.find(query)
       .sort({ createdAt: -1 })
-      .limit(Number(limit))
-      .skip((Number(page) - 1) * Number(limit));
+      .skip((page - 1) * limit)
+      .limit(Number(limit));
 
     const total = await ProductOrder.countDocuments(query);
 
@@ -188,17 +327,15 @@ const getAllOrders = async (req, res) => {
 };
 
 /**
- * ✅ Get order by ID
+ * Get order by ID
  */
 const getOrderById = async (req, res) => {
   try {
     const order = await ProductOrder.findById(req.params.id);
-    if (!order) {
-      return res.status(404).json({
-        success: false,
-        message: "অর্ডার পাওয়া যায়নি!",
-      });
-    }
+    if (!order)
+      return res
+        .status(404)
+        .json({ success: false, message: "অর্ডার পাওয়া যায়নি!" });
 
     res.json({ success: true, data: order });
   } catch (error) {
@@ -211,142 +348,10 @@ const getOrderById = async (req, res) => {
   }
 };
 
-/**
- * ✅ Update order
- */
-const updateOrder = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const updatedOrder = await ProductOrder.findByIdAndUpdate(id, req.body, {
-      new: true,
-      runValidators: true,
-    });
-
-    if (!updatedOrder) {
-      return res.status(404).json({
-        success: false,
-        message: "অর্ডার পাওয়া যায়নি!",
-      });
-    }
-
-    res.json({
-      success: true,
-      message: "অর্ডার সফলভাবে আপডেট হয়েছে!",
-      data: updatedOrder,
-    });
-  } catch (error) {
-    console.error("Error updating order:", error);
-    res.status(500).json({
-      success: false,
-      message: "অর্ডার আপডেট করতে সমস্যা হয়েছে!",
-      error: error.message,
-    });
-  }
-};
-
-/**
- * ✅ Delete order
- */
-const deleteOrder = async (req, res) => {
-  try {
-    const deleted = await ProductOrder.findByIdAndDelete(req.params.id);
-
-    if (!deleted) {
-      return res.status(404).json({
-        success: false,
-        message: "অর্ডার পাওয়া যায়নি!",
-      });
-    }
-
-    res.json({
-      success: true,
-      message: "অর্ডার সফলভাবে ডিলিট হয়েছে!",
-      data: deleted,
-    });
-  } catch (error) {
-    console.error("Error deleting order:", error);
-    res.status(500).json({
-      success: false,
-      message: "অর্ডার ডিলিট করতে সমস্যা হয়েছে!",
-      error: error.message,
-    });
-  }
-};
-
-/**
- * ✅ Get financial summary
- */
-const getFinancialSummary = async (req, res) => {
-  try {
-    const summary = await ProductOrder.getFinancialSummary(); // assumed static method in model
-    res.json({ success: true, data: summary });
-  } catch (error) {
-    console.error("Error fetching financial summary:", error);
-    res.status(500).json({
-      success: false,
-      message: "ফাইন্যান্সিয়াল সামারি লোড করতে সমস্যা হয়েছে!",
-      error: error.message,
-    });
-  }
-};
-
-/**
- * ✅ Get daily summary for charts
- */
-const getDailySummary = async (req, res) => {
-  try {
-    const { days = 7 } = req.query;
-
-    const dateRanges = [];
-    for (let i = parseInt(days) - 1; i >= 0; i--) {
-      const date = new Date();
-      date.setDate(date.getDate() - i);
-      const start = new Date(date.setHours(0, 0, 0, 0));
-      const end = new Date(date.setHours(23, 59, 59, 999));
-
-      dateRanges.push({ date: start, start, end });
-    }
-
-    const dailyData = await Promise.all(
-      dateRanges.map(async (day) => {
-        const dayOrders = await ProductOrder.find({
-          createdAt: { $gte: day.start, $lte: day.end },
-          status: { $ne: "Cancelled" },
-        });
-
-        const dailySales = dayOrders.reduce(
-          (sum, o) => sum + (o.grandTotal || 0),
-          0
-        );
-        const totalOrders = dayOrders.length;
-        const dailyExpense = dailySales * 0.1; // Example: 10% expense
-
-        return {
-          date: day.date.toISOString().split("T")[0],
-          dailySales,
-          totalOrders,
-          dailyExpense,
-        };
-      })
-    );
-
-    res.json({ success: true, data: dailyData });
-  } catch (error) {
-    console.error("Error fetching daily summary:", error);
-    res.status(500).json({
-      success: false,
-      message: "ডেইলি সামারি লোড করতে সমস্যা হয়েছে!",
-      error: error.message,
-    });
-  }
-};
-
 module.exports = {
   createOrder,
-  getAllOrders,
-  getOrderById,
   updateOrder,
   deleteOrder,
-  getFinancialSummary,
-  getDailySummary,
+  getAllOrders,
+  getOrderById,
 };
