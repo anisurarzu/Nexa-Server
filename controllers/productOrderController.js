@@ -330,6 +330,7 @@ const getAllOrders = async (req, res) => {
  * Get order by ID
  */
 const getOrderById = async (req, res) => {
+  res.set("Cache-Control", "no-store"); // add this
   try {
     const order = await ProductOrder.findById(req.params.id);
     if (!order)

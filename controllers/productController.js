@@ -1,4 +1,5 @@
 const Product = require("../models/Product");
+const Category = require("../models/Category"); // ✅ Import Category model
 const sharp = require("sharp");
 
 // Function to generate a new product ID based on the current year and serial number
@@ -42,8 +43,29 @@ exports.createProduct = async (req, res) => {
 // Get All Products (Latest First)
 exports.getProducts = async (req, res) => {
   try {
+    // Fetch all products (latest first)
     const products = await Product.find().sort({ createdAt: -1 });
-    res.status(200).json({ success: true, products });
+
+    // Fetch all categories once (to avoid multiple DB calls)
+    const categories = await Category.find();
+
+    // Convert to a map for quick lookup
+    const categoryMap = {};
+    categories.forEach((cat) => {
+      categoryMap[cat.categoryCode] = cat.categoryName;
+    });
+
+    // Merge categoryName into each product
+    const productsWithCategory = products.map((prod) => ({
+      ...prod._doc,
+      categoryName: categoryMap[prod.category] || "Unknown",
+    }));
+
+    res.status(200).json({
+      success: true,
+      count: productsWithCategory.length,
+      products: productsWithCategory,
+    });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
