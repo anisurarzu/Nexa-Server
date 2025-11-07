@@ -81,7 +81,7 @@ const orderSchema = new mongoose.Schema(
     },
     addOnPrice: {
       type: Number,
-      default: 0, // Price of the add-on
+      default: 0,
     },
     note: {
       type: Boolean,
