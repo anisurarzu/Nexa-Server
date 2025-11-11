@@ -23,6 +23,7 @@ async function generateProductId() {
 
 // Create a Product
 exports.createProduct = async (req, res) => {
+  console.log("Creating product with data:", req.body);
   try {
     const productId = await generateProductId();
     const product = new Product({

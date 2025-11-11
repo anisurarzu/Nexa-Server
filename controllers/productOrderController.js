@@ -90,6 +90,7 @@ const createOrder = async (req, res) => {
     const {
       productId,
       productName,
+      orderDate,
       category,
       unitPrice,
       salePrice,
@@ -137,6 +138,7 @@ const createOrder = async (req, res) => {
 
     const orderData = {
       orderNo,
+      orderDate,
       productId,
       productName,
       category,
