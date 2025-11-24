@@ -111,38 +111,61 @@ exports.getProductById = async (req, res) => {
 // Update Product
 exports.updateProduct = async (req, res) => {
   try {
+    // keep qty and stockQTY always identical
+    if (req.body.qty !== undefined) {
+      req.body.stockQTY = req.body.qty;
+    }
+
     const updatedProduct = await Product.findOneAndUpdate(
-      { productId: req.params.id },
+      { _id: req.params.id },   // <-- FIXED
       req.body,
       { new: true }
     );
+
     if (!updatedProduct) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Product not found" });
+      return res.status(404).json({
+        success: false,
+        message: "Product not found",
+      });
     }
-    res
-      .status(200)
-      .json({ success: true, message: "Product updated", updatedProduct });
+
+    res.status(200).json({
+      success: true,
+      message: "Product updated",
+      updatedProduct,
+    });
   } catch (error) {
-    res.status(400).json({ success: false, message: error.message });
+    res.status(400).json({
+      success: false,
+      message: error.message,
+    });
   }
 };
+
 
 // Delete Product
 exports.deleteProduct = async (req, res) => {
   try {
     const deletedProduct = await Product.findOneAndDelete({
-      productId: req.params.id,
+      _id: req.params.id,   // <-- FIXED
     });
+
     if (!deletedProduct) {
       return res
         .status(404)
         .json({ success: false, message: "Product not found" });
     }
-    res.status(200).json({ success: true, message: "Product deleted" });
+
+    res.status(200).json({
+      success: true,
+      message: "Product deleted",
+    });
+
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({
+      success: false,
+      message: error.message,
+    });
   }
 };
 
