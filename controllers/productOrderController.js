@@ -102,6 +102,8 @@ const createOrder = async (req, res) => {
       totalAmount,
       grandTotal,
       paymentMethod,
+      paidAmount,
+      dueAmount,
       createdBy,
       status,
     } = req.body;
@@ -152,6 +154,8 @@ const createOrder = async (req, res) => {
       totalAmount: totalAmount || calculatedTotal,
       grandTotal: grandTotal || calculatedTotal,
       paymentMethod: paymentMethod || "Cash",
+      paidAmount: paidAmount || 0,
+      dueAmount: dueAmount || 0,
       createdBy: createdBy || "user",
       status: status || "Pending",
       originalStock: updatedProduct.qty + quantity,
@@ -187,7 +191,15 @@ const createOrder = async (req, res) => {
 const updateOrder = async (req, res) => {
   try {
     const { id } = req.params;
-    const { quantity: newQty, status: newStatus, ...updates } = req.body;
+    const { 
+      quantity: newQty, 
+      status: newStatus, 
+      salePrice,
+      paidAmount,
+      paymentMethod,
+      updatedBy,
+      ...updates 
+    } = req.body;
 
     const order = await ProductOrder.findById(id);
     if (!order) {
@@ -213,9 +225,55 @@ const updateOrder = async (req, res) => {
       }
 
       order.quantity = newQty;
-      order.total = order.salePrice * newQty;
-      order.totalAmount = order.total;
-      order.grandTotal = order.total;
+      // Recalculate totals
+      const newTotal = (salePrice || order.salePrice) * newQty;
+      order.total = newTotal;
+      order.totalAmount = newTotal;
+      order.grandTotal = newTotal;
+    }
+
+    // Handle sale price change
+    if (salePrice !== undefined && salePrice !== order.salePrice) {
+      order.salePrice = salePrice;
+      // Recalculate totals
+      const newTotal = salePrice * (newQty || order.quantity);
+      order.total = newTotal;
+      order.totalAmount = newTotal;
+      order.grandTotal = newTotal;
+    }
+
+    // Handle payment method and amounts
+    if (paymentMethod !== undefined) {
+      order.paymentMethod = paymentMethod;
+    }
+
+    if (paidAmount !== undefined) {
+      order.paidAmount = paidAmount;
+    }
+
+    // Recalculate due amount based on new values
+    if (order.paymentMethod === "Cash" || 
+        order.paymentMethod === "Card" || 
+        order.paymentMethod === "Digital" ||
+        order.paymentMethod === "Mobile Banking" ||
+        order.paymentMethod === "Bank Transfer") {
+      // Full payment methods
+      order.paidAmount = order.grandTotal;
+      order.dueAmount = 0;
+    } else if (order.paymentMethod === "Due") {
+      // Due payment
+      order.paidAmount = 0;
+      order.dueAmount = order.grandTotal;
+    } else if (order.paymentMethod === "Partial") {
+      // Partial payment
+      order.paidAmount = order.paidAmount || 0;
+      order.dueAmount = Math.max(0, order.grandTotal - order.paidAmount);
+      
+      // Ensure paidAmount doesn't exceed grandTotal
+      if (order.paidAmount > order.grandTotal) {
+        order.paidAmount = order.grandTotal;
+        order.dueAmount = 0;
+      }
     }
 
     // Handle status change
@@ -230,6 +288,11 @@ const updateOrder = async (req, res) => {
         stockChange = `Deducted ${order.quantity} units (reactivated order)`;
       }
       order.status = newStatus;
+    }
+
+    // Update updatedBy field
+    if (updatedBy) {
+      order.updatedBy = updatedBy;
     }
 
     // Update other fields
@@ -301,6 +364,7 @@ const getAllOrders = async (req, res) => {
         { customerName: { $regex: search, $options: "i" } },
         { customerPhone: { $regex: search, $options: "i" } },
         { orderNo: { $regex: search, $options: "i" } },
+        { productName: { $regex: search, $options: "i" } },
       ];
     }
 
@@ -332,7 +396,7 @@ const getAllOrders = async (req, res) => {
  * Get order by ID
  */
 const getOrderById = async (req, res) => {
-  res.set("Cache-Control", "no-store"); // add this
+  res.set("Cache-Control", "no-store");
   try {
     const order = await ProductOrder.findById(req.params.id);
     if (!order)
@@ -351,10 +415,58 @@ const getOrderById = async (req, res) => {
   }
 };
 
+/**
+ * Get financial summary
+ */
+const getFinancialSummary = async (req, res) => {
+  try {
+    const orders = await ProductOrder.find({});
+    
+    const totalOrders = orders.length;
+    const totalRevenue = orders.reduce((sum, order) => sum + (order.grandTotal || 0), 0);
+    const totalPaid = orders.reduce((sum, order) => sum + (order.paidAmount || 0), 0);
+    const totalDue = orders.reduce((sum, order) => sum + (order.dueAmount || 0), 0);
+    
+    const completedOrders = orders.filter(order => order.status === 'Completed').length;
+    const pendingOrders = orders.filter(order => order.status === 'Pending').length;
+    const processingOrders = orders.filter(order => order.status === 'Processing').length;
+    
+    res.json({
+      success: true,
+      data: {
+        totalOrders,
+        totalRevenue,
+        totalPaid,
+        totalDue,
+        completedOrders,
+        pendingOrders,
+        processingOrders,
+        paymentDistribution: {
+          cash: orders.filter(order => order.paymentMethod === 'Cash').length,
+          card: orders.filter(order => order.paymentMethod === 'Card').length,
+          digital: orders.filter(order => order.paymentMethod === 'Digital').length,
+          mobileBanking: orders.filter(order => order.paymentMethod === 'Mobile Banking').length,
+          bankTransfer: orders.filter(order => order.paymentMethod === 'Bank Transfer').length,
+          due: orders.filter(order => order.paymentMethod === 'Due').length,
+          partial: orders.filter(order => order.paymentMethod === 'Partial').length,
+        }
+      }
+    });
+  } catch (error) {
+    console.error("Error fetching financial summary:", error);
+    res.status(500).json({
+      success: false,
+      message: "ফাইন্যান্সিয়াল সামারি লোড করতে সমস্যা হয়েছে!",
+      error: error.message,
+    });
+  }
+};
+
 module.exports = {
   createOrder,
   updateOrder,
   deleteOrder,
   getAllOrders,
   getOrderById,
+  getFinancialSummary,
 };

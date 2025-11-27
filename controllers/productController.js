@@ -94,13 +94,13 @@ exports.getProductDropdown = async (req, res) => {
 };
 
 // Get Product by ID
-exports.getProductById = async (req, res) => {
+exports.getProductById = async (req, res) => { 
   try {
     const product = await Product.findOne({ productId: req.params.id });
     if (!product) {
       return res
         .status(404)
-        .json({ success: false, message: "Product not found" });
+        .json({ success: false, message: "Product not found" });  
     }
     res.status(200).json({ success: true, product });
   } catch (error) {
